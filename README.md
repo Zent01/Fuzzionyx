@@ -24,9 +24,9 @@ go build -o fuzzionyx fuzzer.go
 
 ⚖️ Copyright & Legal Disclaimer
 
-Copyright © 2026 Fuzzionyx Authors. All rights reserved.
+Copyright © 2026 Fuzzionyx Author. All rights reserved.
 
-**⚠️ Authorized Use & Legal Disclaimer:**
+**Authorized Use & Legal Disclaimer:**
 Fuzzionyx is developed strictly for educational purposes, authorized penetration testing, and legitimate bug bounty programs. 
 
 - **No Illegal Use:** Using this tool to attack targets without prior mutual consent is strictly prohibited and illegal. It is the end user's responsibility to obey all applicable local, state, and federal laws.
