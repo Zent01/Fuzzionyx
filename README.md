@@ -15,6 +15,7 @@ Fuzzionyx is a lightweight yet powerful web fuzzing tool designed for directory 
 - Suppress progress bar for clean automation logs
 
 🚀 Installation
+
 git clone https://github.com/yourusername/fuzzionyx.git
 cd fuzzionyx
 go build -o fuzzionyx fuzzer.go
