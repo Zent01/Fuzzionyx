@@ -1,4 +1,5 @@
 🔍 Fuzzionyx
+
 Fuzzionyx is a lightweight yet powerful web fuzzing tool designed for directory and file discovery. Built in Go, it combines performance with simplicity, making it ideal for penetration testing, bug bounty automation, and security assessments.
 
 ✨ Features
