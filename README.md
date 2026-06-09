@@ -16,7 +16,7 @@ Fuzzionyx is a lightweight yet powerful web fuzzing tool designed for directory 
 
 🚀 Installation
 
-git clone https://github.com/yourusername/Fuzzionyx.git
+git clone https://github.com/Zent01/Fuzzionyx.git
 
 cd fuzzionyx
 
