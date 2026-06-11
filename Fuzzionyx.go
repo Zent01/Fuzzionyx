@@ -14,33 +14,27 @@ import (
 	"time"        // timeouts, durations, and the progress bar ticker
 )
 
-// =============================================================================
-// ANSI COLOR CONSTANTS
-// \033 is the ESC character that begins every ANSI escape sequence.
-// All sequences end with 'm'. cReset must follow every colored string
-// to prevent color from bleeding into subsequent output.
-// =============================================================================
 
 const (
-	cReset     = "\033[0m"  // restore terminal default color and style
-	cRed       = "\033[31m" // red   — 5xx server errors
-	cGreen     = "\033[32m" // green — 2xx success, found count, completion markers
-	cYellow    = "\033[33m" // yellow — 4xx client errors (403, 401, etc.)
-	cCyan      = "\033[36m" // cyan  — 3xx redirects, section headers, accent color
-	cBold      = "\033[1m"  // bold text weight
-	cGray      = "\033[90m" // dark gray — borders, labels, secondary info
-	cBlue      = "\033[34m" // blue — currently reserved for future use
-	cClearLine = "\033[2K"  // erase the entire current terminal line
+	cReset     = "\033[0m"  
+	cRed       = "\033[31m"
+	cGreen     = "\033[32m" 
+	cYellow    = "\033[33m" 
+	cCyan      = "\033[36m"
+	cBold      = "\033[1m"  
+	cGray      = "\033[90m" 
+	cBlue      = "\033[34m" 
+	cClearLine = "\033[2K"  
 
 	// Box-drawing characters — used to build the results panel frame
-	cBoxH  = "─" // horizontal line segment
-	cBoxV  = "│" // vertical line segment
-	cBoxTL = "┌" // top-left corner
-	cBoxTR = "┐" // top-right corner
-	cBoxBL = "└" // bottom-left corner
-	cBoxBR = "┘" // bottom-right corner
-	cBoxML = "├" // left-side T-junction (mid-left connector)
-	cBoxMR = "┤" // right-side T-junction (mid-right connector)
+	cBoxH  = "─"
+	cBoxV  = "│" 
+	cBoxTL = "┌" 
+	cBoxTR = "┐" 
+	cBoxBL = "└" 
+	cBoxBR = "┘" 
+	cBoxML = "├"
+	cBoxMR = "┤"
 )
 
 // =============================================================================
@@ -92,6 +86,8 @@ type Fuzzer struct {
 	threads      int          // number of concurrent worker goroutines
 	timeout      int          // per-request HTTP timeout in seconds
 	filterCodes  map[int]bool // if non-empty, only show responses with these codes
+	filterInSizes map[int64]bool // if non-empty, only show responses with these sizes
+	filterExSizes map[int64]bool // if non-empty, exclude responses with these sizes
 	extensions   []string     // file extensions to append (e.g. ["php","asp"])
 	headers      []string     // validated custom HTTP headers ("Key: Value")
 	delay        int          // milliseconds to wait between requests (rate limit)
@@ -167,6 +163,8 @@ func help() {
 
 	fmt.Printf("  %s%s▸ RESULT FILTERING%s\n", cBold, cCyan, cReset)
 	fmt.Printf("    %s%-24s%s %s\n", cGreen, "-mc", cReset, "Match codes — show only these (e.g., -mc 200,301)")
+	fmt.Printf("    %s%-24s%s %s\n", cGreen, "-fin", cReset, "Filter include sizes — show only these sizes in bytes (e.g., -fin 1234,5678)")
+	fmt.Printf("    %s%-24s%s %s\n", cGreen, "-fex", cReset, "Filter exclude sizes — hide these sizes in bytes (e.g., -fex 0,1234)")
 	fmt.Println()
 
 	fmt.Printf("  %s%s▸ EXTENSIONS & RECURSION%s\n", cBold, cCyan, cReset)
@@ -185,6 +183,8 @@ func help() {
 	fmt.Printf("    fuzzionyx -u http://example.com -w wordlist.txt\n\n")
 	fmt.Printf("    %s# With extensions and filters%s\n", cGray, cReset)
 	fmt.Printf("    fuzzionyx -u http://example.com -w common.txt -e php,asp -mc 200,403\n\n")
+	fmt.Printf("    %s# Filter by response size%s\n", cGray, cReset)
+	fmt.Printf("    fuzzionyx -u http://example.com -w dirs.txt -fin 1234,5678 -fex 0\n\n")
 	fmt.Printf("    %s# Recursive scanning%s\n", cGray, cReset)
 	fmt.Printf("    fuzzionyx -u http://example.com -w dirs.txt -r 2 -rst 200,301\n\n")
 	fmt.Printf("    %s# With rate limiting and custom headers%s\n", cGray, cReset)
@@ -389,6 +389,31 @@ func (f *Fuzzer) newClient() *http.Client {
 		}
 	}
 	return client
+}
+
+// =============================================================================
+// SIZE FILTER HELPER
+// shouldFilterSize checks if a response size passes the -fin and -fex filters.
+// Returns true if the size should be shown (passes all size filters).
+// =============================================================================
+
+// shouldFilterSize determines whether a response size passes the configured filters.
+func (f *Fuzzer) shouldFilterSize(size int64) bool {
+	// If -fin is set, ONLY show sizes that are in the filterInSizes map
+	if len(f.filterInSizes) > 0 {
+		if !f.filterInSizes[size] {
+			return false
+		}
+	}
+	
+	// If -fex is set, exclude sizes that are in the filterExSizes map
+	if len(f.filterExSizes) > 0 {
+		if f.filterExSizes[size] {
+			return false
+		}
+	}
+	
+	return true
 }
 
 // =============================================================================
@@ -616,6 +641,23 @@ func parseCodes(s string) map[int]bool {
 }
 
 // =============================================================================
+// SIZE PARSER
+// parseSizes converts a comma-separated string of integers (e.g. "1234,5678")
+// into a map[int64]bool for O(1) membership tests during size filtering.
+// =============================================================================
+
+// parseSizes converts "1234,5678" into map[int64]bool{1234:true, 5678:true}.
+func parseSizes(s string) map[int64]bool {
+	m := make(map[int64]bool)
+	for _, part := range strings.Split(s, ",") {
+		if n, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64); err == nil {
+			m[n] = true
+		}
+	}
+	return m
+}
+
+// =============================================================================
 // RUN — BFS SCAN ORCHESTRATOR
 // Implements a Breadth-First Search over the URL space.
 // The initial queue contains only the root URL at depth 0.
@@ -747,6 +789,9 @@ func (f *Fuzzer) Run(baseWords []string) {
 					// Apply status-code filter (-mc flag)
 					if len(f.filterCodes) > 0 && !f.filterCodes[code] { continue }
 
+					// Apply size filters (-fin and -fex flags)
+					if !f.shouldFilterSize(size) { continue }
+
 					// Trim the URL for display if it would overflow the column
 					urlPath := j.url
 					if len(urlPath) > 50 {
@@ -817,6 +862,8 @@ func main() {
 	threads  := flag.Int(   "t",       50,    "Threads (default 50)")
 	timeout  := flag.Int(   "timeout", 5,     "HTTP timeout in seconds")
 	mc       := flag.String("mc",      "",    "Match codes — show only these (e.g., 200,301)")
+	fin      := flag.String("fin",     "",    "Filter include sizes — show only these sizes in bytes (e.g., 1234,5678)")
+	fex      := flag.String("fex",     "",    "Filter exclude sizes — hide these sizes in bytes (e.g., 0,1234)")
 	e        := flag.String("e",       "",    "Extensions to include (e.g., php,asp,js)")
 	H        := flag.String("H",       "",    "Custom header (e.g., \"Cookie: session=xxx\")")
 	d        := flag.Int(   "d",       0,     "Delay between requests in ms")
@@ -878,6 +925,8 @@ func main() {
 
 	recurseCodes := parseCodes(*rst)
 	filterCodes  := parseCodes(*mc)
+	filterInSizes := parseSizes(*fin)
+	filterExSizes := parseSizes(*fex)
 
 	// ── Construct the Fuzzer ─────────────────────────────────────────────────
 	fz := &Fuzzer{
@@ -889,6 +938,8 @@ func main() {
 		threads:      *threads,
 		timeout:      *timeout,
 		filterCodes:  filterCodes,
+		filterInSizes: filterInSizes,
+		filterExSizes: filterExSizes,
 		extensions:   extensions,
 		headers:      headers,
 		delay:        *d,
@@ -941,6 +992,16 @@ func main() {
 	fmt.Printf("  %s%-16s%s %d\n",   cBold, "Threads:",   cReset, fz.threads)
 	fmt.Printf("  %s%-16s%s %ds\n",  cBold, "Timeout:",   cReset, fz.timeout)
 	fmt.Printf("  %s%-16s%s %s\n",   cBold, "Show codes:", cReset, mcStr)
+	if len(filterInSizes) > 0 {
+		var parts []string
+		for k := range filterInSizes { parts = append(parts, fmt.Sprintf("%d", k)) }
+		fmt.Printf("  %s%-16s%s %s\n", cBold, "Include sizes:", cReset, strings.Join(parts, ","))
+	}
+	if len(filterExSizes) > 0 {
+		var parts []string
+		for k := range filterExSizes { parts = append(parts, fmt.Sprintf("%d", k)) }
+		fmt.Printf("  %s%-16s%s %s\n", cBold, "Exclude sizes:", cReset, strings.Join(parts, ","))
+	}
 	if len(extensions) > 0 {
 		fmt.Printf("  %s%-16s%s %s\n", cBold, "Extensions:", cReset, strings.Join(extensions, ","))
 	}
